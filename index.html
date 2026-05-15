@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude Token Hesaplayıcı</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="container">
+
+  <!-- HEADER -->
+  <div class="header">
+    <div class="logo-area">
+      <div class="logo-tag">▸ Claude · Token Analiz Sistemi</div>
+      <h1>Token <span>Hesaplayıcı</span></h1>
+      <div class="subtitle">// Gerçek zamanlı · BPE yaklaşık tokenizasyon · v1.0</div>
+    </div>
+    <div class="model-selector">
+      <button class="model-btn" onclick="selectModel('haiku')" id="btn-haiku">Haiku 4.5</button>
+      <button class="model-btn active" onclick="selectModel('sonnet')" id="btn-sonnet">Sonnet 4.6</button>
+      <button class="model-btn" onclick="selectModel('opus')" id="btn-opus">Opus 4.6</button>
+    </div>
+  </div>
+
+  <!-- PLAN BİLGİ KARTLARI -->
+  <div class="plan-info-section">
+    <div class="section-label">▸ Plan Limitleri & Fiyatlandırma</div>
+    <div class="plan-grid" id="plan-grid">
+      <!-- JS ile doldurulacak -->
+    </div>
+    <div class="plan-note">
+      * Mesaj limitleri kısa mesajlar içindir. Uzun prompt/cevaplar daha fazla kota harcar. 5 saatlik pencere ilk mesajla başlar.<br>
+      ** Anthropic, claude.ai oturumları için kalan token bakiyesini API üzerinden açık etmemektedir. Bakiye takibi için: <a href="https://claude.ai/settings/usage" target="_blank">claude.ai/settings/usage</a>
+    </div>
+  </div>
+
+  <!-- KALAN TOKEN - MANUEL GİRİŞ -->
+  <div class="remaining-section">
+    <div class="remaining-main">
+      <div class="remaining-label">Mevcut Bütçe / Kalan Token</div>
+      <div class="remaining-value">
+        <div class="remaining-number" id="remaining-num">200,000</div>
+        <div class="remaining-unit">token</div>
+      </div>
+      <div class="manual-input-row">
+        <span class="manual-label">Manuel gir:</span>
+        <input type="number" class="token-input-field" id="manual-tokens"
+               value="200000" min="1000" max="2000000" step="1000"
+               onchange="updateManualTokens()" title="Kalan token miktarını manuel girin">
+        <div class="preset-buttons">
+          <button class="preset-btn" onclick="setPreset(200000)">200K</button>
+          <button class="preset-btn" onclick="setPreset(100000)">100K</button>
+          <button class="preset-btn" onclick="setPreset(50000)">50K</button>
+        </div>
+      </div>
+    </div>
+    <div class="remaining-bar-wrap">
+      <div class="bar-track">
+        <div class="bar-fill" id="remain-bar" style="width:100%"></div>
+      </div>
+      <div class="bar-labels">
+        <span>0</span>
+        <span id="remain-pct">100% dolu</span>
+        <span id="remain-max">200K</span>
+      </div>
+      <div class="remain-stats">
+        <div class="metric-badge badge-green" id="remain-status">✓ Yeterli</div>
+        <div class="remain-convos-text">
+          ≈ <span id="remain-convos">200+ mesaj</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PROMPT ALANI -->
+  <div class="prompt-section">
+    <div class="prompt-header">
+      <div class="prompt-label">▸ Prompt Girin</div>
+      <div class="live-count">
+        <span id="char-count">0</span> kar ·
+        <span id="word-count">0</span> kel ·
+        anlık ≈ <span id="instant-tokens">0</span> token
+      </div>
+    </div>
+    <div class="textarea-wrap">
+      <textarea
+        id="prompt-input"
+        placeholder="Promptunuzu buraya yazın... Yazdıkça gerçek zamanlı token analizi yapılır.&#10;Analiz tamamlanmadan Enter işlemi 2.2 saniye askıya alınır."
+        onkeydown="handleKeyDown(event)"
+        oninput="handleInput()"
+      ></textarea>
+      <div class="scanning-line" id="scan-line"></div>
+      <div class="analyze-overlay" id="analyze-overlay">
+        <div class="spinner"></div>
+        <div class="analyze-text">Analiz ediliyor...</div>
+      </div>
+    </div>
+    <div class="enter-block" id="enter-block">
+      <div class="enter-block-bar">
+        <div class="enter-block-fill" id="enter-fill"></div>
+      </div>
+      <div class="enter-block-text" id="enter-text">⏳ Analiz tamamlanıyor...</div>
+    </div>
+  </div>
+
+  <!-- SONUÇ PANELİ -->
+  <div class="result-panel" id="result-panel">
+    <div class="result-panel-header">
+      <div class="result-title">
+        <div class="result-dot"></div>
+        Analiz Sonucu
+      </div>
+      <div class="result-timestamp" id="result-ts">—</div>
+    </div>
+
+    <div class="result-body">
+      <div class="metric-card">
+        <div class="metric-label">Prompt Tokeni</div>
+        <div class="metric-value" id="r-prompt">0</div>
+        <div class="metric-sub">bu mesaj</div>
+        <div class="metric-badge badge-blue" id="r-prompt-badge">—</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Sistem Prompt Est.</div>
+        <div class="metric-value" id="r-system">~1,200</div>
+        <div class="metric-sub">claude.ai arayüzü</div>
+        <div class="metric-badge badge-blue">sabit tahmin</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Toplam Giriş</div>
+        <div class="metric-value" id="r-total">0</div>
+        <div class="metric-sub">= prompt + sistem</div>
+        <div class="metric-badge" id="r-total-badge">—</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Tahmini API Maliyeti</div>
+        <div class="metric-value" id="r-cost">$0.000</div>
+        <div class="metric-sub" id="r-cost-model">—</div>
+        <div class="metric-badge badge-green" id="r-cost-badge">ucuz</div>
+      </div>
+    </div>
+
+    <!-- Token Dağılım Görselleştirme -->
+    <div class="token-distribution">
+      <div class="dist-label">Context Window İçindeki Pay (200K)</div>
+      <div class="dist-bar">
+        <div class="dist-seg seg-used" id="dist-used" style="width:0%"></div>
+        <div class="dist-seg seg-remain" id="dist-remain" style="width:100%"></div>
+      </div>
+      <div class="dist-legend">
+        <div class="legend-item"><div class="legend-dot" style="background:#e8623a"></div>Bu prompt + sistem</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#1e2d3d;border:1px solid #243344"></div>Kalan pencere</div>
+      </div>
+    </div>
+
+    <!-- Plan Karşılaştırma Tablosu -->
+    <div class="usage-table">
+      <div class="usage-table-header">
+        <div class="th">Plan</div>
+        <div class="th">Context</div>
+        <div class="th">Bu Prompta Uyar mı?</div>
+        <div class="th">Kalan Yanıt Alanı</div>
+      </div>
+      <div id="usage-rows"></div>
+    </div>
+
+    <div class="info-strip">
+      <div class="info-icon">ℹ</div>
+      <div class="info-text">
+        BPE tahmini: Türkçe ~3.2 kar/token · İngilizce ~3.8 kar/token · Kod ~3 kar/token.
+        Gerçek sayım için <a href="https://platform.openai.com/tokenizer" target="_blank">tiktoken</a> veya
+        <a href="https://platform.claude.com/docs/en/build-with-claude/token-counting" target="_blank">Anthropic Token Counting API</a> kullanın. ±%5-10 sapma olabilir.
+      </div>
+    </div>
+  </div>
+
+  <!-- HAZIR ÖRNEK PROMPTLAR -->
+  <div class="examples-section">
+    <div class="section-label">▸ Hızlı Örnekler</div>
+    <div class="tips-grid">
+      <div class="tip-card" onclick="loadExample('short')">
+        <div class="tip-label">Kısa</div>
+        <div class="tip-text">Merhaba, bugün hava nasıl?</div>
+        <div class="tip-tokens" id="tip-short">≈ — token</div>
+      </div>
+      <div class="tip-card" onclick="loadExample('medium')">
+        <div class="tip-label">Orta</div>
+        <div class="tip-text">FastAPI + JWT auth REST API örneği...</div>
+        <div class="tip-tokens" id="tip-medium">≈ — token</div>
+      </div>
+      <div class="tip-card" onclick="loadExample('long')">
+        <div class="tip-label">Uzun</div>
+        <div class="tip-text">ML pipeline + çoklu bileşen analizi...</div>
+        <div class="tip-tokens" id="tip-long">≈ — token</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    Claude Token Hesaplayıcı · Güncel plan bilgileri: <a href="https://claude.ai/pricing" target="_blank">claude.ai/pricing</a> ·
+    Bakiye takibi: <a href="https://claude.ai/settings/usage" target="_blank">Settings → Usage</a>
+  </div>
+
+</div>
+
+<script src="tokenizer.js"></script>
+<script src="plans.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
