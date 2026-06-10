@@ -2,12 +2,14 @@
  * app.js
  * ─────────────────────────────────────────────────────────────
  * Claude Token Hesaplayıcı — Ana uygulama mantığı
+ *
+ * Güvenlik notları:
+ *  - Inline onclick yok; tüm etkileşim addEventListener ile (sıkı CSP uyumlu).
+ *  - Dinamik HTML'e giren her değer escapeHtml() ile kaçışlanır.
+ *  - Tercihler localStorage'da saklanır (model, bütçe).
  * ─────────────────────────────────────────────────────────────
  */
 
-// ═══════════════════════════════════════════════════
-//  UYGULAMA DURUMU
-// ═══════════════════════════════════════════════════
 const State = {
   currentModel: 'sonnet',
   manualBudget: 200_000,
@@ -18,7 +20,8 @@ const State = {
 };
 
 const SYSTEM_PROMPT_ESTIMATE = 1_200; // claude.ai arayüzü tahmini
-const ANALYZE_DELAY_MS = 2_200;        // Enter engelleme süresi
+const ANALYZE_DELAY_MS = 900;         // analiz debounce / Enter engelleme süresi
+const STORAGE_KEY = 'tokenizator-prefs';
 
 const EXAMPLES = {
   short:  'Merhaba, bugün hava nasıl?',
@@ -44,9 +47,17 @@ Ayrıca MLflow ile deney takibini ve Docker ile containerization'ı da açıkla.
 // ═══════════════════════════════════════════════════
 //  YARDIMCI FONKSİYONLAR
 // ═══════════════════════════════════════════════════
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[ch]));
+}
+
+function $(id) { return document.getElementById(id); }
+
 function formatK(n) {
   if (!n && n !== 0) return '—';
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(n % 1_000_000 ? 1 : 0) + 'M';
   if (n >= 1_000)     return (n / 1_000).toFixed(0) + 'K';
   return n.toString();
 }
@@ -56,7 +67,7 @@ function formatNum(n) {
 }
 
 function animateNumber(id, target) {
-  const el = document.getElementById(id);
+  const el = $(id);
   if (!el) return;
   const start = parseInt(el.textContent.replace(/\D/g, '')) || 0;
   const dur = 400;
@@ -71,35 +82,55 @@ function animateNumber(id, target) {
   requestAnimationFrame(step);
 }
 
+function savePrefs() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      model: State.currentModel,
+      budget: State.manualBudget,
+    }));
+  } catch (_) { /* gizli mod vs. — sessizce geç */ }
+}
+
+function loadPrefs() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+    const prefs = JSON.parse(raw);
+    if (prefs.model && Plans.models[prefs.model]) State.currentModel = prefs.model;
+    const budget = parseInt(prefs.budget);
+    if (Number.isFinite(budget)) State.manualBudget = Math.max(1_000, Math.min(2_000_000, budget));
+  } catch (_) { /* bozuk veri — varsayılanlarla devam */ }
+}
+
 // ═══════════════════════════════════════════════════
-//  PLAN KARTLARINI OLUŞTUR
+//  PLAN KARTLARI
 // ═══════════════════════════════════════════════════
 function buildPlanCards() {
-  const grid = document.getElementById('plan-grid');
+  const grid = $('plan-grid');
   if (!grid) return;
 
   grid.innerHTML = Plans.list.map(p => `
-    <div class="plan-card" style="--plan-color:${p.color}">
-      <div class="plan-name">${p.name}</div>
-      <div class="plan-price">${p.priceLabel}</div>
-      <div class="plan-price-unit">${p.priceUnit || '—'}</div>
+    <div class="plan-card" style="--plan-color:${escapeHtml(p.color)}">
+      <div class="plan-name">${escapeHtml(p.name)}</div>
+      <div class="plan-price">${escapeHtml(p.priceLabel)}</div>
+      <div class="plan-price-unit">${escapeHtml(p.priceUnit || '—')}</div>
       <hr class="plan-divider">
       <div class="plan-stat">
         <div class="plan-stat-row">
           <span class="plan-stat-key">Context</span>
-          <span class="plan-stat-val highlight">${formatK(p.contextWindow)}</span>
+          <span class="plan-stat-val highlight">${escapeHtml(formatK(p.contextWindow))}</span>
         </div>
         <div class="plan-stat-row">
           <span class="plan-stat-key">Mesaj/pencere</span>
-          <span class="plan-stat-val">${p.messagesPerWindow}</span>
+          <span class="plan-stat-val">${escapeHtml(p.messagesPerWindow)}</span>
         </div>
         <div class="plan-stat-row">
           <span class="plan-stat-key">Reset</span>
-          <span class="plan-stat-val">${p.windowHours ? p.windowHours + 's' : 'günlük'}</span>
+          <span class="plan-stat-val">${escapeHtml(p.windowHours ? p.windowHours + 's' : p.note)}</span>
         </div>
         <div class="plan-stat-row">
           <span class="plan-stat-key">Modeller</span>
-          <span class="plan-stat-val">${p.models.join(', ')}</span>
+          <span class="plan-stat-val">${escapeHtml(p.models.join(', '))}</span>
         </div>
       </div>
     </div>
@@ -110,34 +141,30 @@ function buildPlanCards() {
 //  MODEL SEÇİMİ
 // ═══════════════════════════════════════════════════
 function selectModel(modelKey) {
+  if (!Plans.models[modelKey]) return;
   State.currentModel = modelKey;
-  document.querySelectorAll('.model-btn').forEach(b => b.classList.remove('active'));
-  const btn = document.getElementById('btn-' + modelKey);
-  if (btn) btn.classList.add('active');
+  savePrefs();
 
-  // Mevcut metin varsa sonuçları güncelle
-  const text = document.getElementById('prompt-input')?.value || '';
-  if (text.trim() && document.getElementById('result-panel')?.classList.contains('visible')) {
+  document.querySelectorAll('.model-btn').forEach(b => b.classList.remove('active'));
+  $('btn-' + modelKey)?.classList.add('active');
+
+  const text = $('prompt-input')?.value || '';
+  if (text.trim() && $('result-panel')?.classList.contains('visible')) {
     runAnalysis(text);
   }
 }
 
 // ═══════════════════════════════════════════════════
-//  KALAN TOKEN GÜNCELLEMESİ
+//  KALAN TOKEN
 // ═══════════════════════════════════════════════════
 function updateManualTokens() {
-  const input = document.getElementById('manual-tokens');
+  const input = $('manual-tokens');
   const val = parseInt(input?.value) || 200_000;
   State.manualBudget = Math.max(1_000, Math.min(2_000_000, val));
   if (input) input.value = State.manualBudget;
-  document.getElementById('remain-max').textContent = formatK(State.manualBudget);
-  updateRemainingDisplay(Tokenizer.estimate(document.getElementById('prompt-input')?.value || ''));
-}
-
-function setPreset(value) {
-  const input = document.getElementById('manual-tokens');
-  if (input) input.value = value;
-  updateManualTokens();
+  savePrefs();
+  $('remain-max').textContent = formatK(State.manualBudget);
+  updateRemainingDisplay(Tokenizer.estimate($('prompt-input')?.value || ''));
 }
 
 function updateRemainingDisplay(usedTokens) {
@@ -145,8 +172,7 @@ function updateRemainingDisplay(usedTokens) {
   const remaining = Math.max(0, State.manualBudget - used);
   const pct = State.manualBudget > 0 ? (remaining / State.manualBudget) * 100 : 0;
 
-  // Sayı animasyonu
-  const numEl = document.getElementById('remaining-num');
+  const numEl = $('remaining-num');
   if (numEl) {
     numEl.textContent = formatNum(remaining);
     numEl.classList.remove('low', 'critical');
@@ -154,8 +180,7 @@ function updateRemainingDisplay(usedTokens) {
     else if (pct < 30) numEl.classList.add('low');
   }
 
-  // Bar
-  const bar = document.getElementById('remain-bar');
+  const bar = $('remain-bar');
   if (bar) {
     bar.style.width = pct.toFixed(1) + '%';
     bar.classList.remove('low', 'critical');
@@ -163,27 +188,18 @@ function updateRemainingDisplay(usedTokens) {
     else if (pct < 30) bar.classList.add('low');
   }
 
-  // Durum badge
-  const statusEl = document.getElementById('remain-status');
+  const statusEl = $('remain-status');
   if (statusEl) {
-    if (pct < 10) {
-      statusEl.className = 'metric-badge badge-red';
-      statusEl.textContent = '⚠ Kritik az';
-    } else if (pct < 30) {
-      statusEl.className = 'metric-badge badge-yellow';
-      statusEl.textContent = '⚡ Az kaldı';
-    } else {
-      statusEl.className = 'metric-badge badge-green';
-      statusEl.textContent = '✓ Yeterli';
-    }
+    if (pct < 10)      { statusEl.className = 'metric-badge badge-red';    statusEl.textContent = '⚠ Kritik az'; }
+    else if (pct < 30) { statusEl.className = 'metric-badge badge-yellow'; statusEl.textContent = '⚡ Az kaldı'; }
+    else               { statusEl.className = 'metric-badge badge-green';  statusEl.textContent = '✓ Yeterli'; }
   }
 
-  document.getElementById('remain-pct').textContent = Math.round(pct) + '% kaldı';
+  $('remain-pct').textContent = Math.round(pct) + '% kaldı';
 
-  // Tahmini mesaj sayısı
   const avgMsg = 350;
   const approx = Math.floor(remaining / avgMsg);
-  const convosEl = document.getElementById('remain-convos');
+  const convosEl = $('remain-convos');
   if (convosEl) {
     convosEl.textContent = approx > 500 ? '500+ mesaj'
                          : approx > 100 ? approx + '+ mesaj'
@@ -192,16 +208,16 @@ function updateRemainingDisplay(usedTokens) {
 }
 
 // ═══════════════════════════════════════════════════
-//  GERÇEKZAMANLı SAYAÇ + ANALİZ TETİKLEME
+//  GERÇEK ZAMANLI SAYAÇ + ANALİZ TETİKLEME
 // ═══════════════════════════════════════════════════
 function handleInput() {
-  const text = document.getElementById('prompt-input')?.value || '';
+  const text = $('prompt-input')?.value || '';
   const tokens = Tokenizer.estimate(text);
 
-  document.getElementById('char-count').textContent = text.length.toLocaleString('tr-TR');
+  $('char-count').textContent = text.length.toLocaleString('tr-TR');
   const wordCount = text.trim() ? text.trim().split(/\s+/).length : 0;
-  document.getElementById('word-count').textContent = wordCount.toLocaleString('tr-TR');
-  document.getElementById('instant-tokens').textContent = tokens.toLocaleString('tr-TR');
+  $('word-count').textContent = wordCount.toLocaleString('tr-TR');
+  $('instant-tokens').textContent = tokens.toLocaleString('tr-TR');
 
   updateRemainingDisplay(tokens);
 
@@ -211,7 +227,7 @@ function handleInput() {
     State.analyzeTimer = setTimeout(() => runAnalysis(text), ANALYZE_DELAY_MS);
   } else {
     stopAnalyzeMode();
-    document.getElementById('result-panel')?.classList.remove('visible');
+    $('result-panel')?.classList.remove('visible');
   }
 }
 
@@ -219,11 +235,10 @@ function handleInput() {
 //  ENTER ENGELLEYİCİ
 // ═══════════════════════════════════════════════════
 function handleKeyDown(e) {
-  // Shift+Enter = satır sonu, izin ver
-  if (e.key === 'Enter' && e.shiftKey) return;
+  if (e.key === 'Enter' && e.shiftKey) return; // satır sonu serbest
 
   if (e.key === 'Enter') {
-    const text = document.getElementById('prompt-input')?.value?.trim() || '';
+    const text = $('prompt-input')?.value?.trim() || '';
     if (!text) return;
 
     if (State.isAnalyzing || State.lastAnalyzedText !== text) {
@@ -236,17 +251,16 @@ function handleKeyDown(e) {
         State.analyzeTimer = setTimeout(() => runAnalysis(text), ANALYZE_DELAY_MS);
       }
     }
-    // Analiz tamamsa (lastAnalyzedText === text && !isAnalyzing) → Enter serbest
   }
 }
 
 function showEnterBlock() {
-  const block  = document.getElementById('enter-block');
-  const fill   = document.getElementById('enter-fill');
-  const txt    = document.getElementById('enter-text');
+  const block = $('enter-block');
+  const fill  = $('enter-fill');
+  const txt   = $('enter-text');
 
   block?.classList.add('visible');
-  if (txt) txt.textContent = '⏳ Analiz tamamlanıyor, bekleyin...';
+  if (txt) txt.textContent = 'Analiz tamamlanıyor, bekleyin...';
 
   if (fill) {
     fill.style.transition = 'none';
@@ -269,16 +283,15 @@ function showEnterBlock() {
 // ═══════════════════════════════════════════════════
 function triggerAnalyzeMode() {
   State.isAnalyzing = true;
-  const ta = document.getElementById('prompt-input');
-  ta?.classList.add('analyzing');
-  document.getElementById('analyze-overlay')?.classList.add('visible');
+  $('prompt-input')?.classList.add('analyzing');
+  $('analyze-overlay')?.classList.add('visible');
 }
 
 function stopAnalyzeMode() {
   State.isAnalyzing = false;
-  document.getElementById('prompt-input')?.classList.remove('analyzing');
-  document.getElementById('analyze-overlay')?.classList.remove('visible');
-  document.getElementById('enter-block')?.classList.remove('visible');
+  $('prompt-input')?.classList.remove('analyzing');
+  $('analyze-overlay')?.classList.remove('visible');
+  $('enter-block')?.classList.remove('visible');
 }
 
 // ═══════════════════════════════════════════════════
@@ -292,19 +305,17 @@ function runAnalysis(text) {
   const promptTokens = Tokenizer.estimate(text);
   const totalInput = promptTokens + SYSTEM_PROMPT_ESTIMATE;
   const estResponse = Tokenizer.estimateResponseTokens(promptTokens);
-  const inputCost  = Plans.calcCost(totalInput, 0, State.currentModel);
   const totalCost  = Plans.calcCost(totalInput, estResponse, State.currentModel);
 
-  // ── Metrikler ──
   animateNumber('r-prompt', promptTokens);
-  document.getElementById('r-system').textContent  = formatNum(SYSTEM_PROMPT_ESTIMATE);
+  $('r-system').textContent = formatNum(SYSTEM_PROMPT_ESTIMATE);
   animateNumber('r-total', totalInput);
 
-  document.getElementById('r-cost').textContent    = '$' + totalCost.toFixed(4);
-  document.getElementById('r-cost-model').textContent = model.name + ' · giriş+çıkış';
+  $('r-cost').textContent = '$' + totalCost.toFixed(4);
+  $('r-cost-model').textContent = model.name + ' · giriş+çıkış';
 
   // Badge: prompt uzunluğu
-  const pb = document.getElementById('r-prompt-badge');
+  const pb = $('r-prompt-badge');
   if (pb) {
     if      (promptTokens < 200)  { pb.className = 'metric-badge badge-green';  pb.textContent = 'kısa'; }
     else if (promptTokens < 1000) { pb.className = 'metric-badge badge-blue';   pb.textContent = 'orta'; }
@@ -312,12 +323,12 @@ function runAnalysis(text) {
     else                          { pb.className = 'metric-badge badge-red';    pb.textContent = 'çok uzun'; }
   }
 
-  // Badge: context doluluk
+  // Badge: context doluluk (seçili modelin penceresine göre)
   const maxCtx = model.contextWindow;
   const ctxPct = totalInput / maxCtx;
-  const tb = document.getElementById('r-total-badge');
+  const tb = $('r-total-badge');
   if (tb) {
-    const pctStr = (ctxPct * 100).toFixed(1) + '% ctx';
+    const pctStr = (ctxPct * 100).toFixed(2) + '% ctx';
     if      (ctxPct < 0.10) { tb.className = 'metric-badge badge-green';  tb.textContent = pctStr; }
     else if (ctxPct < 0.50) { tb.className = 'metric-badge badge-blue';   tb.textContent = pctStr; }
     else if (ctxPct < 0.80) { tb.className = 'metric-badge badge-yellow'; tb.textContent = pctStr; }
@@ -325,7 +336,7 @@ function runAnalysis(text) {
   }
 
   // Badge: maliyet
-  const cb = document.getElementById('r-cost-badge');
+  const cb = $('r-cost-badge');
   if (cb) {
     if      (totalCost < 0.001) { cb.className = 'metric-badge badge-green';  cb.textContent = 'ucuz'; }
     else if (totalCost < 0.01)  { cb.className = 'metric-badge badge-blue';   cb.textContent = 'normal'; }
@@ -333,22 +344,21 @@ function runAnalysis(text) {
     else                        { cb.className = 'metric-badge badge-red';    cb.textContent = 'çok pahalı'; }
   }
 
-  // ── Dağılım bar ──
+  // Dağılım barı
+  $('dist-ctx-label').textContent = formatK(maxCtx);
   const usedPct = Math.min(100, ctxPct * 100);
-  const distUsed   = document.getElementById('dist-used');
-  const distRemain = document.getElementById('dist-remain');
-  if (distUsed)   distUsed.style.width   = usedPct.toFixed(2) + '%';
+  const distUsed   = $('dist-used');
+  const distRemain = $('dist-remain');
+  if (distUsed) {
+    distUsed.style.width = Math.max(usedPct, 0.4).toFixed(2) + '%';
+    distUsed.textContent = usedPct < 4 ? '' : Math.round(usedPct) + '%';
+  }
   if (distRemain) distRemain.style.width = (100 - usedPct).toFixed(2) + '%';
-  if (distUsed)   distUsed.textContent   = usedPct < 3 ? '' : Math.round(usedPct) + '%';
 
-  // ── Plan tablosu ──
   buildUsageTable(totalInput, estResponse);
 
-  // Zaman damgası
-  const ts = document.getElementById('result-ts');
-  if (ts) ts.textContent = new Date().toLocaleTimeString('tr-TR');
-
-  document.getElementById('result-panel')?.classList.add('visible');
+  $('result-ts').textContent = new Date().toLocaleTimeString('tr-TR');
+  $('result-panel')?.classList.add('visible');
 }
 
 // ═══════════════════════════════════════════════════
@@ -356,26 +366,26 @@ function runAnalysis(text) {
 // ═══════════════════════════════════════════════════
 function buildUsageTable(totalInput, estResponse) {
   const rows = Plans.list.map(p => {
-    const fits    = totalInput < p.contextWindow;
+    const fits = totalInput < p.contextWindow;
     const remaining = Math.max(0, p.contextWindow - totalInput);
     const statusCls = fits ? 'ok' : 'bad';
     const statusTxt = fits ? '✓ Sığar' : '✗ Sığmaz';
     const respStatus = !fits ? 'bad' : remaining > estResponse * 2 ? 'ok' : 'warn';
-    const respText  = fits ? '~' + formatK(remaining) + ' token kalan' : '—';
+    const respText = fits ? '~' + formatK(remaining) + ' token' : '—';
 
     return `
       <div class="usage-row">
         <div class="usage-cell name">
-          <div class="usage-dot" style="background:${p.color}"></div>
-          ${p.name}
+          <span class="usage-dot" style="background:${escapeHtml(p.color)}"></span>
+          ${escapeHtml(p.name)}
         </div>
-        <div class="usage-cell">${formatK(p.contextWindow)}</div>
+        <div class="usage-cell">${escapeHtml(formatK(p.contextWindow))}</div>
         <div class="usage-cell ${statusCls}">${statusTxt}</div>
-        <div class="usage-cell ${respStatus}">${respText}</div>
+        <div class="usage-cell ${respStatus}">${escapeHtml(respText)}</div>
       </div>`;
   }).join('');
 
-  const container = document.getElementById('usage-rows');
+  const container = $('usage-rows');
   if (container) container.innerHTML = rows;
 }
 
@@ -385,7 +395,7 @@ function buildUsageTable(totalInput, estResponse) {
 function loadExample(type) {
   const text = EXAMPLES[type];
   if (!text) return;
-  const ta = document.getElementById('prompt-input');
+  const ta = $('prompt-input');
   if (ta) {
     ta.value = text;
     ta.focus();
@@ -397,16 +407,54 @@ function loadExample(type) {
 //  BAŞLANGIÇ
 // ═══════════════════════════════════════════════════
 function init() {
+  loadPrefs();
   buildPlanCards();
 
-  // Örnek token tahminlerini göster
-  Object.keys(EXAMPLES).forEach(k => {
-    const t = Tokenizer.estimate(EXAMPLES[k]);
-    const el = document.getElementById('tip-' + k);
-    if (el) el.textContent = '≈ ' + formatNum(t) + ' token';
+  // Model butonları
+  $('model-selector')?.addEventListener('click', e => {
+    const btn = e.target.closest('[data-model]');
+    if (btn) selectModel(btn.dataset.model);
   });
 
-  selectModel('sonnet');
+  // Model nokta renkleri (CSP nedeniyle JS ile atanıyor)
+  document.querySelectorAll('.model-dot[data-color]').forEach(dot => {
+    const m = Plans.models[dot.dataset.color];
+    if (m) dot.style.background = m.color;
+  });
+
+  // Prompt alanı
+  const ta = $('prompt-input');
+  ta?.addEventListener('input', handleInput);
+  ta?.addEventListener('keydown', handleKeyDown);
+
+  // Bütçe girişi + presetler
+  $('manual-tokens')?.addEventListener('change', updateManualTokens);
+  $('preset-buttons')?.addEventListener('click', e => {
+    const btn = e.target.closest('[data-preset]');
+    if (!btn) return;
+    const input = $('manual-tokens');
+    if (input) input.value = btn.dataset.preset;
+    updateManualTokens();
+  });
+
+  // Örnekler
+  $('tips-grid')?.addEventListener('click', e => {
+    const card = e.target.closest('[data-example]');
+    if (card) loadExample(card.dataset.example);
+  });
+
+  // Örnek token tahminleri
+  Object.keys(EXAMPLES).forEach(k => {
+    const el = $('tip-' + k);
+    if (el) el.textContent = '≈ ' + formatNum(Tokenizer.estimate(EXAMPLES[k])) + ' token';
+  });
+
+  // Kayıtlı tercihleri uygula
+  const budgetInput = $('manual-tokens');
+  if (budgetInput) budgetInput.value = State.manualBudget;
+  $('remain-max').textContent = formatK(State.manualBudget);
+
+  selectModel(State.currentModel);
   updateRemainingDisplay(0);
 }
 

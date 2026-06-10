@@ -3,129 +3,129 @@
  * ─────────────────────────────────────────────────────────────
  * Claude plan ve model verileri.
  *
- * Son güncelleme: Mayıs 2026
- * Kaynak: https://claude.ai/pricing · https://support.claude.com
- * https://anthropic.com/api
+ * Son güncelleme: Haziran 2026
+ * Kaynak: https://claude.ai/pricing · https://platform.claude.com/docs/en/about-claude/models/overview
  *
  * ÖNEMLİ UYARI:
  * Claude.ai (Pro/Max/Team) için "kalan token bakiyesi" bilgisine
  * program aracılığıyla erişim MÜMKÜN DEĞİLDİR.
- * Anthropic bu veriyi public bir API ile sunmamaktadır.
- *
  * Bakiye takibi için:  https://claude.ai/settings/usage
- * API kullanımı için:  https://console.anthropic.com  (Admin API Key)
  * ─────────────────────────────────────────────────────────────
  */
 
 const Plans = {
 
   // ─── PLAN TANIM TABLOSU ──────────────────────────────────
+  // contextWindow: claude.ai oturumları için pratik pencere (~200K).
+  // API'de Sonnet 4.6 / Opus 4.8 / Fable 5 → 1M context destekler.
   list: [
     {
       key: 'free',
       name: 'Free',
-      price: 0,
       priceLabel: '$0',
       priceUnit: '/ay',
-      color: '#7a95b0',
+      color: '#8a9bb0',
       contextWindow: 200_000,
-      // Mesaj limitleri kısa mesajlar içindir; uzun mesajlarda düşer
-      messagesPerWindow: '~40',    // 5 saatlik pencere veya günlük
-      windowHours: null,           // Günlük reset
+      messagesPerWindow: '~40',
+      windowHours: null,
       models: ['Sonnet'],
-      features: ['Temel kullanım', 'Günlük limit', 'claude.ai erişimi'],
       note: 'Günlük reset',
     },
     {
       key: 'pro',
       name: 'Pro',
-      price: 20,
       priceLabel: '$20',
       priceUnit: '/ay',
-      color: '#e8623a',
+      color: '#d97757',
       contextWindow: 200_000,
-      messagesPerWindow: '~45',    // 5 saatlik pencerede
+      messagesPerWindow: '~45',
       windowHours: 5,
       models: ['Haiku', 'Sonnet', 'Opus'],
-      features: ['5x Free kullanım', 'Öncelikli erişim', 'Projects & Memory', 'Web search'],
       note: '5s pencere reset',
     },
     {
       key: 'max5x',
       name: 'Max 5×',
-      price: 100,
       priceLabel: '$100',
       priceUnit: '/ay',
-      color: '#4a9ef5',
+      color: '#6ba6f5',
       contextWindow: 200_000,
-      messagesPerWindow: '~225',   // Pro'nun 5x'i
+      messagesPerWindow: '~225',
       windowHours: 5,
-      models: ['Haiku', 'Sonnet', 'Opus', 'Öncelikli'],
-      features: ['5x Pro kullanım', 'Claude Code dahil', 'Bağımsız Opus kotası'],
+      models: ['Tüm modeller', 'Claude Code'],
       note: '5s pencere reset',
     },
     {
       key: 'max20x',
       name: 'Max 20×',
-      price: 200,
       priceLabel: '$200',
       priceUnit: '/ay',
-      color: '#a78bfa',
+      color: '#b69df7',
       contextWindow: 200_000,
-      messagesPerWindow: '~900',   // Pro'nun 20x'i
+      messagesPerWindow: '~900',
       windowHours: 5,
-      models: ['Haiku', 'Sonnet', 'Opus', 'Öncelikli + Hızlı'],
-      features: ['20x Pro kullanım', 'Claude Code dahil', 'Ajansal iş akışları'],
+      models: ['Tüm modeller', 'Claude Code'],
       note: '5s pencere reset',
     },
     {
       key: 'api',
       name: 'API',
-      price: null,
       priceLabel: 'Pay-as-go',
-      priceUnit: '',
-      color: '#3de89a',
-      contextWindow: 200_000,   // Bazı modellerde 1M (özel)
-      messagesPerWindow: '∞',  // Sadece oran limitli
+      priceUnit: 'token başına',
+      color: '#4fd1a1',
+      contextWindow: 1_000_000,
+      messagesPerWindow: '∞',
       windowHours: null,
-      models: ['Haiku', 'Sonnet', 'Opus'],
-      features: ['Token başına ödeme', 'Admin API', 'Kullanım raporlama'],
+      models: ['Tüm modeller', '1M context'],
       note: 'Rate limit bazlı',
     },
   ],
 
   // ─── MODEL TANIM TABLOSU ─────────────────────────────────
-  // Fiyat: USD / 1M token
-  // Kaynak: https://anthropic.com/pricing (Mayıs 2026)
+  // Fiyat: USD / 1M token — Kaynak: platform.claude.com (Haziran 2026)
   models: {
     haiku: {
       key: 'haiku',
       name: 'Claude Haiku 4.5',
-      apiName: 'claude-haiku-4-5-20251001',
-      inputPer1M:  0.80,
-      outputPer1M: 4.00,
+      apiName: 'claude-haiku-4-5',
+      inputPer1M: 1.00,
+      outputPer1M: 5.00,
       contextWindow: 200_000,
-      color: '#3de89a',
+      maxOutput: 64_000,
+      color: '#4fd1a1',
       desc: 'Hızlı, ekonomik',
     },
     sonnet: {
       key: 'sonnet',
       name: 'Claude Sonnet 4.6',
       apiName: 'claude-sonnet-4-6',
-      inputPer1M:  3.00,
+      inputPer1M: 3.00,
       outputPer1M: 15.00,
-      contextWindow: 200_000,
-      color: '#e8623a',
-      desc: 'Dengeli performans',
+      contextWindow: 1_000_000,
+      maxOutput: 64_000,
+      color: '#d97757',
+      desc: 'Hız / zekâ dengesi',
     },
     opus: {
       key: 'opus',
-      name: 'Claude Opus 4.6',
-      apiName: 'claude-opus-4-6',
-      inputPer1M:  15.00,
-      outputPer1M: 75.00,
-      contextWindow: 200_000,
-      color: '#4a9ef5',
+      name: 'Claude Opus 4.8',
+      apiName: 'claude-opus-4-8',
+      inputPer1M: 5.00,
+      outputPer1M: 25.00,
+      contextWindow: 1_000_000,
+      maxOutput: 128_000,
+      color: '#6ba6f5',
+      desc: 'Uzun soluklu ajan işleri',
+    },
+    fable: {
+      key: 'fable',
+      name: 'Claude Fable 5',
+      apiName: 'claude-fable-5',
+      inputPer1M: 10.00,
+      outputPer1M: 50.00,
+      contextWindow: 1_000_000,
+      maxOutput: 128_000,
+      color: '#b69df7',
       desc: 'En güçlü model',
     },
   },
